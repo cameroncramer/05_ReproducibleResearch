@@ -1,0 +1,456 @@
+---
+author: "Cameron Cramer"
+date: "Monday, January 26, 2015"
+output: pdf_document
+---
+
+#Title
+Analysis of historical NOAA storm data shows that for the last 20 years, tornado, floods and heat events have been the primary causes of storm related fatalities and injuries, while flood, hurricane, dryness and tornado events have been the primary causes of storm related property and crop damage. 
+
+#Synopsis
+The NOAA offers historical data on storm damage going back decades, and data collection has gotten better with each decade.  With in-depth analysis of the data, several things become apparent.  First of all, this is a very large dataset to navigate.  Second is that due to the fact that hundreds of individuals and States are responsible to gathering, estimating and entering the data, there are many ways in which someone could potentially clean, filter and present the data.  The data was looked at in several ways.  Initial analysis indicated that rolling up the data annually and limiting the dataset to the most recent 20 years was the best approach for analysis since this is where the bulk of the data collection occurred and the data appears to be cleaner compared to the data gathered in prior years.  Further, it was determined that since the same event was catalogued differently, and several events were catalogued as two or three simultaneous events, that the list of event types needed to be filtered and combined in some way.  Our chosen path is provided in detail below.  Finally, in the process of cleaning the data, if no determination of the meaning of intent of a data entry could be made, then it was eliminated from the data.  With the a cleaned dataset developed, this study attempts to answer what types of Storm Events over the past 20 years have caused the most fatalities, injuries, property damage and crop damage.  As will be established below, tornado, flood and heat events have caused the most fatalities and injuries while flood, hurricane, dryness and tornado events have caused the most property and crop damage.
+
+#Data Processing (DP)
+
+##DP1: Get The Data
+
+####Setup the The Workspace
+
+setwd("~/R/05_ReproducibleResearch/05_ReproducibleResearch/CourseProject#2") 
+
+####Load Needed R Packagese
+
+```{r}
+
+library("R.utils")
+
+library("plyr")
+
+library("xtable")
+
+library("lattice")
+```
+
+####Download Data for Analysus
+
+if(!file.exists("./repdata-data-StormData.csv.bz2")){  
+file.create("./repdata-data-StormData.csv.bz2")  
+URL <- "http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"  
+destfile <- "./repdata-data-StormData.csv.bz2"  
+download.file(URL, destfile)}  
+
+####Unzip Downloaded File 
+
+bunzip2("repdata-data-StormData.csv.bz2", destname=gsub("[.]bz2$", "", "repdata-data-StormData.csv"),   overwrite=FALSE, remove=FALSE)  
+
+###Take Initial Look at the Data
+
+```{r}
+tab5rows <- read.table("repdata-data-StormData.csv", header = TRUE, nrows = 5)
+classes <- sapply(tab5rows, class)
+classes
+
+```
+
+###All Column Classes Are Factor
+Asking read.csv to assign classes will take too long.  
+To expedite loading, select columns needed and assign colClasses.  
+
+-~~STATE..~~  
+-**BGN_DATE**  
+-~~BGN_TIME~~  
+-~~TIME_ZONE~~  
+-~~COUNTY~~  
+-~~COUNTYNAM~~  
+-**STATE**  
+-**EVTYPE**  
+-~~BGN_RANGE~~  
+-~~BGN_AZI~~  
+-~~BGN_LOCATI~~  
+-~~END_DATE~~  
+-~~END_TIME~~  
+-~~COUNTY_END~~  
+-~~COUNTYENDN~~  
+-~~END_RANGE~~  
+-~~END_AZI~~  
+-~~END_LOCATI~~  
+-~~LENGTH~~  
+-~~WIDTH~~  
+-~~F~~  
+-~~MAG FATALITIES~~  
+-**INJURIES**  
+-**PROPDMG** 
+-**PROPDMGEXP**  
+-**CROPDMG**  
+-**CROPDMGEXP**  
+-~~WFO~~  
+-~~STATEOFFIC~~  
+-~~ZONENAMES~~  
+-~~LATITUDE~~  
+-~~LONGITUDE~~  
+-~~LATITUDE_E~~  
+-~~LONGITUDE_~~  
+-~~REMARKS~~  
+-~~REFNUM~~  
+
+####Load Data Needed for Analysis and Set colClasses to Expedite Processing.
+
+```{r}
+stormdata <- read.csv("repdata-data-StormData.csv",
+  strip.white=TRUE,  
+  colClasses=c("NULL","character","NULL","NULL","NULL","NULL",
+  "character","character", "NULL",
+  "NULL","NULL","character","NULL","NULL","NULL","NULL","NULL","NULL",
+  "NULL","NULL","NULL","NULL","numeric","numeric","numeric","character",
+  "numeric","character","NULL","NULL","NULL","NULL","NULL","NULL","NULL",
+  "NULL","NULL"))
+```
+
+####Quick Data Summary
+
+```{r}
+str(stormdata)
+```
+
+The 12 variables were pulled in as expected.
+
+##Start Data Cleaning
+
+##DP2: Fix The Dates
+
+####Date Needs Transformation.  Add New Column with Tranformed Date  
+
+```{r}
+stormdata$BeginDate <- as.Date(strptime(stormdata$BGN_DATE, format = "%m/%d/%Y %H:%M:%S")) 
+```
+
+####Quick Look at Event "Begin Dates"
+
+#####Unique Event Begin Dates
+
+```{r}
+length(unique(stormdata$BeginDate))
+```
+
+#####Total Event Begin Dates 
+
+```{r}
+length(stormdata$BeginDate)
+```
+
+There are 902,297 total event begin dates and 16,335 unique dates.  It would be more useful to see unique event totals by year. Add a column to dataset with distinct event Years. 
+
+####Create an Event Year (i.e., 1999) Column for Easy Analysis
+
+```{r}
+stormdata$BeginYear <- as.factor(format(stormdata$BeginDate,format="%Y"))
+```
+
+####Quick Table of Events by Year
+
+```{r}
+YearSum <- ddply(stormdata, .(BeginYear) , summarise , Count = length(EVTYPE))
+YearSum
+```
+  
+####Analysis Decision
+####Use a 20 Year Look-back From 1991-2011:  
+Robust data collection started appoximately 20 years ago, so that's what will be included in this analysis.
+
+```{r}
+stormdata20 <- stormdata[format(stormdata$BeginDate,format="%Y") > 1991,]
+str(stormdata20)
+```
+
+Limiting to 20 years reduces the dataset from 902,297 to 728,272 observations.  Since a relatively small amount of messy data is lost, 20 years seems like a good cut point.
+
+##DP3: Fix Event Types
+
+####Create Initial List of Top 25 Events For Last 20 Years
+
+```{r}
+EventSum <- ddply(stormdata20, .(EVTYPE) , summarise , Count = length(EVTYPE))
+EventSumSort <- EventSum[order(-EventSum$Count) , ]
+EventSumSort[1:25, ]
+```
+
+The above list shows the top 25 most frequend events for the study period (20 years). **The EVTYPE data is extremely messy** and needs significant cleaning (combining, correcting, clarifying).  The plan is to use the grepl function to find and replace the character string data within EVTYPE. **The main challenenge** is deciding how to order the find/replace list since EVTYPE has sevaral  combinations of event types per event, and final event type will be assigned from the top down as the find/replace is executed.  Below are examples of how distinct events are combined, such as wind, fire, rain thunderstorm, TSTM, etc.  Taking the first 3 elements on list below as an example, if we find/replace rain first, then the third element will be assigned as a rain event AND NOT a lightning event.  
+
+[1] "LIGHTNING"  
+[2] THUNDERSTORM WINDS LIGHTNING"  
+[3] "LIGHTNING AND HEAVY RAIN"
+
+```{r}
+LIGHTNING <- stormdata20$EVTYPE[grepl("lightn", stormdata20$EVTYPE, ignore.case = TRUE)]
+unique(LIGHTNING)
+```
+
+####The event types were modified in the following order:
+
+-"tornad" = "TORNADO"  
+-"spout" = "TORNADO"  
+-"thun.*orm" ="THUNDERSTORM"  
+-"tstm" = "THUNDERSTORM"  
+-"snow" = "WINTER WEATHER"  
+-"blizzard" = "WINTER WEATHER"  
+-"hail" = "HAIL"  
+-"rain" = "RAIN"  
+-"precip" = "RAIN"  
+-"hurricane" = "HURRICANE"  
+-"tropical.*storm" = "TROPICAL STORM"  
+-"flood" = "FLOOD"  
+-"fld" ="FLOOD"  
+-"fire" = "FIRE"  
+-"lightn" = "LIGHTNING"  
+-"wind" = "OTHER WIND"  
+-"cold" = "WINTER WEATHER"  
+-"heat" = "HEAT"  
+-"storm surge" = "STORM SURGE"  
+-"surf" = "OTHER WATER EVENT"  
+-"rip" = "OTHER WATER EVENT"  
+-"tid" = "OTHER WATER EVENT"  
+-"chill" = "WINTER WEATHER"  
+-"drought" = "DRYNESS"  
+-"wint" = "WINTER WEATHER"  
+-"dust" = "DUST"  
+-"fog" ="FOG"  
+-"freez" = "WINTER WEATHER"  
+-"frost" = "WINTER WEATHER"  
+-"ice" = "WINTER WEATHER"  
+-"funn" = "TORNADO"  
+-"warm" = "HEAT"  
+-"depress" = "HURRICANE"  
+-"sleet" = "WINTER WEATHER"  
+-"dry" = "DRYNESS"  
+-"ice" = "WINTER WEATHER"  
+-"icy" = "WINTER WEATHER"  
+-"cool" = "HEAT"  
+-"hot" = "WINTER WEATHER"  
+-"seas" = "OTHER WATER EVENT"  
+-"landsl" = "LANDSLIDE"  
+-"mudsl" = "LANDSLIDE"  
+-"stream" = "OTHER WATER EVENT"  
+-"water" = "OTHER WATER EVENT"  
+-"high" = "HEAT"  
+
+```{r}
+stormdata20$EvType <- as.character(stormdata20$EVTYPE)  
+stormdata20$EvType[grepl("tornad", stormdata20$EvType, ignore.case = TRUE)]          <- "TORNADO"  
+stormdata20$EvType[grepl("spout", stormdata20$EvType, ignore.case = TRUE)]           <- "TORNADO"  
+stormdata20$EvType[grepl("thun.*orm", stormdata20$EvType, ignore.case = TRUE)]       <- "THUNDERSTORM"  
+stormdata20$EvType[grepl("tstm", stormdata20$EvType, ignore.case = TRUE)]            <- "THUNDERSTORM"  
+stormdata20$EvType[grepl("snow", stormdata20$EvType, ignore.case = TRUE)]            <- "WINTER WEATHER"  
+stormdata20$EvType[grepl("blizzard", stormdata20$EvType, ignore.case = TRUE)]        <- "WINTER WEATHER"  
+stormdata20$EvType[grepl("hail", stormdata20$EvType, ignore.case = TRUE)]            <- "HAIL"  
+stormdata20$EvType[grepl("rain", stormdata20$EvType, ignore.case = TRUE)]            <- "RAIN"  
+stormdata20$EvType[grepl("precip", stormdata20$EvType, ignore.case = TRUE)]          <- "RAIN"  
+stormdata20$EvType[grepl("hurricane", stormdata20$EvType, ignore.case = TRUE)]       <- "HURRICANE"  
+stormdata20$EvType[grepl("tropical.*storm", stormdata20$EvType, ignore.case = TRUE)] <- "TROPICAL STORM"  
+stormdata20$EvType[grepl("flood", stormdata20$EvType, ignore.case = TRUE)]           <- "FLOOD"  
+stormdata20$EvType[grepl("fld", stormdata20$EvType, ignore.case = TRUE)]             <- "FLOOD"  
+stormdata20$EvType[grepl("fire", stormdata20$EvType, ignore.case = TRUE)]            <- "FIRE"  
+stormdata20$EvType[grepl("lightn", stormdata20$EvType, ignore.case = TRUE)]          <- "LIGHTNING"  
+stormdata20$EvType[grepl("wind", stormdata20$EvType, ignore.case = TRUE)]            <- "OTHER WIND"  
+stormdata20$EvType[grepl("cold", stormdata20$EvType, ignore.case = TRUE)]            <- "WINTER WEATHER"  
+stormdata20$EvType[grepl("heat", stormdata20$EvType, ignore.case = TRUE)]            <- "HEAT"  
+stormdata20$EvType[grepl("storm surge", stormdata20$EvType, ignore.case = TRUE)]     <- "STORM SURGE"
+stormdata20$EvType[grepl("surf", stormdata20$EvType, ignore.case = TRUE)]            <- "OTHER WATER EVENT"
+stormdata20$EvType[grepl("rip", stormdata20$EvType, ignore.case = TRUE)]             <- "OTHER WATER EVENT"
+stormdata20$EvType[grepl("tid", stormdata20$EvType, ignore.case = TRUE)]             <- "OTHER WATER EVENT"
+stormdata20$EvType[grepl("chill", stormdata20$EvType, ignore.case = TRUE)]           <- "WINTER WEATHER"
+stormdata20$EvType[grepl("drought", stormdata20$EvType, ignore.case = TRUE)]         <- "DRYNESS"
+stormdata20$EvType[grepl("wint", stormdata20$EvType, ignore.case = TRUE)]            <- "WINTER WEATHER"
+stormdata20$EvType[grepl("dust", stormdata20$EvType, ignore.case = TRUE)]            <- "DUST"
+stormdata20$EvType[grepl("fog", stormdata20$EvType, ignore.case = TRUE)]             <- "FOG"
+stormdata20$EvType[grepl("freez", stormdata20$EvType, ignore.case = TRUE)]           <- "WINTER WEATHER"
+stormdata20$EvType[grepl("frost", stormdata20$EvType, ignore.case = TRUE)]           <- "WINTER WEATHER"
+stormdata20$EvType[grepl("ice", stormdata20$EvType, ignore.case = TRUE)]             <- "WINTER WEATHER"
+stormdata20$EvType[grepl("funn", stormdata20$EvType, ignore.case = TRUE)]            <- "TORNADO"
+stormdata20$EvType[grepl("warm", stormdata20$EvType, ignore.case = TRUE)]            <- "HEAT"
+stormdata20$EvType[grepl("depress", stormdata20$EvType, ignore.case = TRUE)]         <- "HURRICANE"
+stormdata20$EvType[grepl("sleet", stormdata20$EvType, ignore.case = TRUE)]           <- "WINTER WEATHER"
+stormdata20$EvType[grepl("dry", stormdata20$EvType, ignore.case = TRUE)]             <- "DRYNESS"
+stormdata20$EvType[grepl("ice", stormdata20$EvType, ignore.case = TRUE)]             <- "WINTER WEATHER"
+stormdata20$EvType[grepl("icy", stormdata20$EvType, ignore.case = TRUE)]             <- "WINTER WEATHER"
+stormdata20$EvType[grepl("cool", stormdata20$EvType, ignore.case = TRUE)]             <- "HEAT"
+stormdata20$EvType[grepl("hot", stormdata20$EvType, ignore.case = TRUE)]             <- "WINTER WEATHER"
+stormdata20$EvType[grepl("seas", stormdata20$EvType, ignore.case = TRUE)]             <- "OTHER WATER EVENT"
+stormdata20$EvType[grepl("landsl", stormdata20$EvType, ignore.case = TRUE)]             <- "LANDSLIDE"
+stormdata20$EvType[grepl("mudsl", stormdata20$EvType, ignore.case = TRUE)]             <- "LANDSLIDE"
+stormdata20$EvType[grepl("stream", stormdata20$EvType, ignore.case = TRUE)]             <- "OTHER WATER EVENT"
+stormdata20$EvType[grepl("water", stormdata20$EvType, ignore.case = TRUE)]             <- "OTHER WATER EVENT"
+stormdata20$EvType[grepl("high", stormdata20$EvType, ignore.case = TRUE)]             <- "HEAT"
+stormdata20$EvType <- as.factor(stormdata20$EvType)
+```
+
+####Recreate New List of Top Events For Last 20 Years Using Merged Event Types
+
+Below we have created a new list of top events based upon event frequency. This seems like an accurate and satisfactory consolidation of events by type.
+
+```{r}
+NewEventSum <- ddply(stormdata20, .(EvType) , summarise , Count = length(EvType))
+NewEventSumSort <- NewEventSum[order(-NewEventSum$Count) , ]
+NewEventSumSort[1:25, ]
+```
+
+##DP4: Create Fatalities/Injuries Datasets For Analysis
+
+####Pull together final dataset for fatalities/injuries analysis
+####Limit dataset to events where either injuries of fatalities happened. 
+
+```{r}
+stormdata20InjFat<-stormdata20[(stormdata20$FATALITIES > 0)|(stormdata20$INJURIES > 0), ]
+```
+
+####Pull the data needed for analysis of injuries and fatalities.
+
+```{r}
+stormdata20InjFat <- subset(stormdata20InjFat, select=c(EvType, INJURIES, FATALITIES, BeginYear))
+stormFinalCC <- stormdata20InjFat [complete.cases(stormdata20),]
+```
+
+##DP5: Subset the Crop/Property Data
+
+As can be seen below, the property/crop damages and fatalities/injuries data have significantly different amounts of data, and since there is much more cleaning left to do, it makes sense to subset the data since we will be looking at these separately.
+
+```{r}
+length(stormdata20$CROPDMG[stormdata20$CROPDMG > 0 ])
+length(stormdata20$PROPDMG[stormdata20$PROPDMG > 0 ])
+length(stormdata20$FATALITIES[stormdata20$FATALITIES > 0 ])
+length(stormdata20$INJURIES[stormdata20$INJURIES > 0 ])
+length(stormdata20$CROPDMG[stormdata20$CROPDMG == 0 ])
+length(stormdata20$PROPDMG[stormdata20$PROPDMG == 0 ])
+length(stormdata20$FATALITIES[stormdata20$FATALITIES == 0 ])
+length(stormdata20$INJURIES[stormdata20$INJURIES == 0 ])
+```
+
+####Subset the Property/Crop Damage Data
+
+```{r}
+TGSAll <- subset(stormdata20, select=c(EvType, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP, BeginDate, BeginYear, STATE))
+```
+
+####Clean Property/Crop data and take a first look
+
+```{r}
+summary(TGSAll$PROPDMG)
+unique(TGSAll$PROPDMGEXP)
+summary(TGSAll$CROPDMG)
+unique(TGSAll$CROPDMGEXP)
+```
+
+####Lots of data to clean.  Start with removing cases where there was no recorded crop or Property losses.  This results in 500,000 less rows.
+
+```{r}
+str(TGSAll)
+TGS<-TGSAll[(TGSAll$PROPDMG > 0)|(TGSAll$CROPDMG > 0), ]
+str(TGS)
+```
+
+####Replace Property Damage Exponent bad data with NA's and replace exponents with appropriate multiplyer so that damage and exp columns can easily be multiplied to get net damage.  
+
+```{r}
+TGS$PropDmgExp <- TGS$PROPDMGEXP
+TGS$PropDmgExp<-gsub(pattern="1",     replacement="1", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="2",     replacement="10", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="H|h|3", replacement="100", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="K|4",   replacement="1000", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="5",     replacement="10000", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="6",     replacement="100000", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="M|m|7", replacement="1000000", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="8",     replacement="10000000", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="B",     replacement="100000000", TGS$PropDmgExp)
+TGS$PropDmgExp<-gsub(pattern="[[:punct:]]", replacement="NA", TGS$PropDmgExp)
+TGS$PropDmgExp<-as.numeric(TGS$PropDmgExp)
+```
+
+####Multiply Property damage and exp to get net property damage
+
+```{r}
+TGS$PropDmgTotal<- TGS$PROPDMG * TGS$PropDmgExp
+```
+
+####Replace Crop Damage Exponent bad data with NA's and replace exponents with appropriate multiplyer so that damage and exp columns can easily be multiplied to get net damage. 
+
+```{r}
+TGS$CropDmgExp <- TGS$CROPDMGEXP
+TGS$CropDmgExp<-gsub(pattern="1",     replacement="1", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="2",     replacement="10", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="H|h|3", replacement="100", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="K|4",   replacement="1000", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="5",     replacement="10000", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="6",     replacement="100000", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="M|m|7", replacement="1000000", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="8",     replacement="10000000", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="B",     replacement="100000000", TGS$CropDmgExp)
+TGS$CropDmgExp<-gsub(pattern="[[:punct:]]", replacement="NA", TGS$CropDmgExp)
+TGS$CropDmgExp<-as.numeric(TGS$CropDmgExp)
+```
+
+####Multiply crop damage and exp to get net damage
+
+```{r}
+TGS$CropDmgTotal<- TGS$CROPDMG * (TGS$CropDmgExp)
+```
+
+####Pull together final dataset for crop/property damage analysis
+
+```{r}
+TGSFinal <- subset(TGS, select=c(EvType, PropDmgTotal, CropDmgTotal, BeginYear))
+TGSFinalCC <- TGSFinal [complete.cases(TGSFinal),]
+```
+
+##DP6: Pull Together Data for plots
+
+####Fatality/Injury Data for plots
+
+```{r}
+FatalityPlot <- aggregate(FATALITIES ~ EvType, data = stormdata20InjFat, FUN = sum)
+InjuryPlot <- aggregate(INJURIES ~ EvType, data = stormdata20InjFat, FUN = sum)
+Top15Injury <- head(InjuryPlot[order(InjuryPlot$INJURIES, decreasing = T), ], 15)
+Top15Fatality <- head(FatalityPlot[order(FatalityPlot$FATALITIES, decreasing = T), ], 15)
+```
+
+####Property/Crop Data for plots
+
+```{r}
+PropertyPlot <- aggregate(PropDmgTotal ~ EvType, data = TGS, FUN = sum)
+Top15Property <- head(PropertyPlot[order(PropertyPlot$PropDmgTotal, decreasing = T), ], 15)
+CropPlot <- aggregate(CropDmgTotal ~ EvType, data = TGS, FUN = sum)
+Top15Crop <- head(CropPlot[order(CropPlot$CropDmgTotal, decreasing = T), ], 15)
+```
+
+#Results
+
+##Storm Event Caused Fatalities/Injuries
+
+As we see below, heat is the leading cause of injuries and the second leading cause of fatalities from storm events between 1991 and 2011, and conversely, tornados are the leading cause of injuries but the second leading cause of fatalities.  Floods and winter weather events are both top five storm event contributors that have led to fatalities and injuries over a 20 year period.  
+
+
+###Fatalities & Injuries by Event Charts
+
+```{r}
+par(mfrow = c(1, 2), mar = c(12, 5, 3, 2), mgp = c(3, 1, 0), cex = 0.8, las = 3)
+ylim <- c(0, max(Top15Fatality$FATALITIES))
+FatalPlot <- barplot(Top15Fatality$FATALITIES, names.arg = Top15Fatality$EvType, col = 'green',
+main = 'Top 15 Fatality Events', ylab = 'Fatalities', ylim = ylim)
+ylim <- c(0, max(Top15Injury$INJURIES))
+InjuryPlot <- barplot(Top15Injury$INJURIES, names.arg = Top15Injury$EvType, col = 'red',
+main = 'Top 15 Injury Events', ylab = 'Injuries', ylim = ylim)
+```
+
+##Storm Event Caused PRoperty/Crop Damage
+
+As we see below, flood is the leading cause of property damage and the second leading cause of crop damage.  Hurricane events were the third leading cause of both property and crop damage.  Interestingly, dryness is the leading cause of crop damage but does not make the top 10 list of events causing the most property damage.  Hail was a top 5 cause of both property and crop damage.  Property impact of storm damage on property had been much more significant compared to crop damage, causing several times more damage.      
+
+###Property & Crop Damage by Event Charts    
+
+```{r}
+par(mfrow = c(1, 2), mar = c(12, 5, 3, 2), mgp = c(3, 1, 0), cex = 0.8, las = 3)
+ylim <- c(0, max(Top15Property$PropDmgTotal))
+PropertyPlot <- barplot(Top15Property$PropDmgTotal, names.arg = Top15Property$EvType, col = 'green',
+main = 'Top 15 Property Damage Events', ylab = 'Property', ylim = ylim)
+ylim <- c(0, max(Top15Crop$CropDmgTotal))
+InjuryPlot <- barplot(Top15Crop$CropDmgTotal, names.arg = Top15Crop$EvType, col = 'red',
+main = 'Top 15 Crop Damage Events', ylab = 'Injuries', ylim = ylim)
+```
